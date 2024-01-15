@@ -216,27 +216,26 @@ class Player(pygame.sprite.Sprite):
 ghost_list = []
 #Inheritime Player klassist
 class Ghost(Player):
+    def __init__(self, x, y, filename):
+        super().__init__(x, y, filename)
+        self.path = []  # Current path
+        self.last_move_time = 0  # Time of last move
+        self.move_cooldown = 500  # Milliseconds between moves
+
     # Change the speed of the ghost
-    def changespeed(self,list,ghost,turn,steps,l):
-      try:
-        z=list[turn][2]
-        if steps < z:
-          self.change_x=list[turn][0]
-          self.change_y=list[turn][1]
-          steps+=1
-        else:
-          if turn < l:
-            turn+=1
-          elif ghost == "clyde":
-            turn = 2
-          else:
-            turn = 0
-          self.change_x=list[turn][0]
-          self.change_y=list[turn][1]
-          steps = 0
-        return [turn,steps]
-      except IndexError:
-         return [0,0]
+    def changespeed(self,x,y):
+        self.change_x+=x
+        self.change_y+=y
+
+        # Function to set a new path
+    def set_path(self, new_path):
+        self.path = new_path
+
+    # Function to get the next step in the current path
+    def get_next_step(self):
+        if self.path:
+            return self.path.pop(0)
+        return None
 
 # Call this function so the Pygame library can initialize itself
 pygame.init()
@@ -306,7 +305,7 @@ def startGame():
 
   pacman_pos = random.choice(open_spaces)
   Pacman = Player(pacman_pos[0] * (CELL_SIZE + PATH_WIDTH) // 2, pacman_pos[1] * (CELL_SIZE + PATH_WIDTH) // 2, "images/Trollman.png")
-  mark_space_as_occupied(grid, pacman_pos)
+  #mark_space_as_occupied(grid, pacman_pos)
   open_spaces.remove(pacman_pos)
   # Create the player paddle object
   #Pacman = Player( w, p_h, "images/Trollman.png" )
@@ -317,28 +316,13 @@ def startGame():
 
   last_spawn_time = pygame.time.get_ticks()
 
-  # Draw the grid
-  for row in range(19):
-      for column in range(19):
-          if (row == 7 or row == 8) and (column == 8 or column == 9 or column == 10):
-              continue
-          else:
-            block = Block(yellow, 4, 4)
-
-            # Set a random location for the block
-            block.rect.x = (30*column+6)+26
-            block.rect.y = (30*row+6)+26
-
-            b_collide = pygame.sprite.spritecollide(block, wall_list, False)
-            p_collide = pygame.sprite.spritecollide(block, pacman_collide, False)
-            if b_collide:
-              continue
-            elif p_collide:
-              continue
-            else:
-              # Add the block to the list of objects
-              block_list.add(block)
-              all_sprites_list.add(block)
+  for pos in open_spaces:
+        block_x, block_y = grid_position_to_game(pos)
+        block = Block(yellow, 4, 4)
+        block.rect.x = block_x + ((CELL_SIZE + PATH_WIDTH) - 50) // 2  # Center the block within the cell
+        block.rect.y = block_y + ((CELL_SIZE + PATH_WIDTH) - 50) // 2
+        block_list.add(block)
+        all_sprites_list.add(block)
 
   bll = len(block_list)
 
@@ -389,17 +373,7 @@ def startGame():
       blocks_hit_list = pygame.sprite.spritecollide(Pacman, block_list, True)
        
       for gho in ghost_list:
-        ghost_grid_pos = game_position_to_grid((gho.rect.x, gho.rect.y))
-        pacman_grid_pos = game_position_to_grid((Pacman.rect.x, Pacman.rect.y))
-
-        if manhattan_distance(ghost_grid_pos, pacman_grid_pos) <= 10:
-          path = astar(grid, ghost_grid_pos, pacman_grid_pos)
-          if path:
-              # Move the ghost along the path
-              next_step = path[1]  # Get the next step towards Pacman
-              next_game_pos = grid_position_to_game(next_step)
-              # Update ghost position
-              gho.rect.x, gho.rect.y = next_game_pos
+        update_ghost_movement(gho, (Pacman.rect.x, Pacman.rect.y), wall_list, grid, open_spaces, current_time)
 
       # Check the list of collisions.
       if len(blocks_hit_list) > 0:
@@ -432,6 +406,38 @@ def startGame():
     
       clock.tick(10)
 
+def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_time):
+    if current_time - ghost.last_move_time < ghost.move_cooldown:
+        return  # Not enough time has passed for the next move
+    
+    ghost_grid_pos = game_position_to_grid((ghost.rect.x, ghost.rect.y))
+    target_grid_pos = game_position_to_grid(target_pos)
+
+    if not ghost.path or not is_pacman_in_range:
+        if is_pacman_in_range(ghost_grid_pos, target_grid_pos):
+        # Follow Pac-Man
+            print("follow pac man!")
+            target_x, target_y = find_nearest_walkable_cell(grid, target_grid_pos[0], target_grid_pos[1])
+            print("target cell: ", (target_x, target_y), grid[target_x][target_y])
+            path = astar(grid, ghost_grid_pos, (target_x, target_y))
+            print("pacman path: ", path)
+            if path:
+                ghost.set_path(path)
+        else:
+            random_target_pos = random.choice(open_spaces)
+            print("random target pos: ", random_target_pos, grid[random_target_pos[0]][random_target_pos[1]])
+            path = astar(grid, ghost_grid_pos, random_target_pos)
+            print("random path: ", path)
+            if path:
+                ghost.set_path(path)
+
+    next_step = ghost.get_next_step()
+    if next_step:
+        next_game_pos = grid_position_to_game(next_step)
+        ghost.rect.x, ghost.rect.y = next_game_pos
+        ghost.update(walls, False)
+        ghost.last_move_time = current_time 
+
 def is_pacman_in_range(ghost_pos, pacman_pos, range=10):
     return manhattan_distance(ghost_pos, pacman_pos) <= range
 
@@ -447,25 +453,58 @@ def spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, l
     Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, "images/Pinky.png")  # Replace with actual ghost image
     monsta_list.add(Ghosty)
     all_sprites_list.add(Ghosty)
-    mark_space_as_occupied(grid, ghost_pos)
+    #mark_space_as_occupied(grid, ghost_pos)
     open_spaces.remove(ghost_pos)
     available_positions.remove(ghost_pos)
     ghost_list.append(Ghosty)
 
     return True
 
+def find_nearest_walkable_cell(grid, x, y):
+    # Check if the initial position is already walkable
+    if grid[x][y] == 0:
+        return (x, y)
+
+    # Directions to explore: up, down, left, right
+    directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+    visited = set()  # Keep track of visited cells to avoid loops
+    queue = [(x, y)]  # Start with the initial position
+
+    while queue:
+        current_x, current_y = queue.pop(0)
+        visited.add((current_x, current_y))
+
+        for dx, dy in directions:
+            next_x, next_y = current_x + dx, current_y + dy
+
+            # Check boundaries
+            if next_x < 0 or next_x >= len(grid) or next_y < 0 or next_y >= len(grid[0]):
+                continue
+
+            # If it's a walkable cell, return its position
+            if grid[next_x][next_y] == 0:
+                return (next_x, next_y)
+
+            # If not visited and not a wall, add to queue
+            if (next_x, next_y) not in visited and grid[next_x][next_y] != 0:
+                queue.append((next_x, next_y))
+
+    # Return original position if no walkable cell is found (unlikely in a maze)
+    return (x, y)
+
+
 def game_position_to_grid(position):
     """Converts game (pixel) position to grid position."""
     x, y = position
-    grid_x = x // (CELL_SIZE + PATH_WIDTH)
-    grid_y = y // (CELL_SIZE + PATH_WIDTH)
+    grid_x = x // ((CELL_SIZE + PATH_WIDTH) // 2)
+    grid_y = y // ((CELL_SIZE + PATH_WIDTH) // 2)
     return (grid_x, grid_y)
 
 def grid_position_to_game(position):
     """Converts grid position back to game (pixel) position."""
     grid_x, grid_y = position
-    x = grid_x * (CELL_SIZE + PATH_WIDTH)
-    y = grid_y * (CELL_SIZE + PATH_WIDTH)
+    x = grid_x * ((CELL_SIZE + PATH_WIDTH) // 2)
+    y = grid_y * ((CELL_SIZE + PATH_WIDTH) // 2)
     return (x, y)
 
 def doNext(message,left,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate):
