@@ -2,7 +2,9 @@
 #https://github.com/hbokmann/Pacman
   
 import pygame
-  
+import random
+from astar import astar
+
 black = (0,0,0)
 white = (255,255,255)
 blue = (0,0,255)
@@ -10,6 +12,11 @@ green = (0,255,0)
 red = (255,0,0)
 purple = (255,0,255)
 yellow   = ( 255, 255,   0)
+
+GRID_WIDTH = 11  # Fewer cells, but each cell is larger
+GRID_HEIGHT = 11
+CELL_SIZE = 40  # Size of each cell (room)
+PATH_WIDTH = 30 # Width of the paths
 
 Trollicon=pygame.image.load('images/Trollman.png')
 pygame.display.set_icon(Trollicon)
@@ -35,60 +42,69 @@ class Wall(pygame.sprite.Sprite):
         self.rect.top = y
         self.rect.left = x
 
-# This creates all the walls in room 1
 def setupRoomOne(all_sprites_list):
-    # Make the walls. (x_pos, y_pos, width, height)
-    wall_list=pygame.sprite.RenderPlain()
-     
-    # This is a list of walls. Each is in the form [x, y, width, height]
-    walls = [ [0,0,6,600],
-              [0,0,600,6],
-              [0,600,606,6],
-              [600,0,6,606],
-              [300,0,6,66],
-              [60,60,186,6],
-              [360,60,186,6],
-              [60,120,66,6],
-              [60,120,6,126],
-              [180,120,246,6],
-              [300,120,6,66],
-              [480,120,66,6],
-              [540,120,6,126],
-              [120,180,126,6],
-              [120,180,6,126],
-              [360,180,126,6],
-              [480,180,6,126],
-              [180,240,6,126],
-              [180,360,246,6],
-              [420,240,6,126],
-              [240,240,42,6],
-              [324,240,42,6],
-              [240,240,6,66],
-              [240,300,126,6],
-              [360,240,6,66],
-              [0,300,66,6],
-              [540,300,66,6],
-              [60,360,66,6],
-              [60,360,6,186],
-              [480,360,66,6],
-              [540,360,6,186],
-              [120,420,366,6],
-              [120,420,6,66],
-              [480,420,6,66],
-              [180,480,246,6],
-              [300,480,6,66],
-              [120,540,126,6],
-              [360,540,126,6]
-            ]
-     
-    # Loop through the list. Create the wall, add it to the list
-    for item in walls:
-        wall=Wall(item[0],item[1],item[2],item[3],blue)
-        wall_list.add(wall)
-        all_sprites_list.add(wall)
-         
-    # return our new list
-    return wall_list
+    # Initialize all cells as walls
+    # Initialize all cells as walls
+    grid = [[True for _ in range(GRID_WIDTH * 2 + 1)] for _ in range(GRID_HEIGHT * 2 + 1)]
+
+    def remove_wall_between(current, next):
+        x1, y1 = current
+        x2, y2 = next
+        grid[x1][y1] = False
+        grid[x2][y2] = False
+        grid[(x1 + x2) // 2][(y1 + y2) // 2] = False
+
+    def visit_cell(start_x, start_y):
+        stack = [(start_x, start_y)]
+        grid[start_x][start_y] = False
+
+        while stack:
+            x, y = stack[-1]
+            neighbors = []
+
+            # Check for unvisited neighbors
+            for dx, dy in [(2, 0), (-2, 0), (0, 2), (0, -2)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < len(grid) and 0 <= ny < len(grid[0]) and grid[nx][ny]:
+                    neighbors.append((nx, ny))
+
+            if neighbors:
+                next_x, next_y = random.choice(neighbors)
+                remove_wall_between((x, y), (next_x, next_y))
+                stack.append((next_x, next_y))
+            else:
+                stack.pop()
+
+    # Start the maze generation from a random cell
+    start_x = random.randrange(1, GRID_WIDTH * 2, 2)
+    start_y = random.randrange(1, GRID_HEIGHT * 2, 2)
+    visit_cell(start_x, start_y)
+
+    # Create wall objects based on the grid
+    wall_list = pygame.sprite.RenderPlain()
+    for x in range(len(grid)):
+        for y in range(len(grid[x])):
+            if grid[x][y]:  # If the cell is a wall
+                # Correctly calculate the position and size of each wall segment
+                wall_x = x * (CELL_SIZE + PATH_WIDTH) // 2
+                wall_y = y * (CELL_SIZE + PATH_WIDTH) // 2
+                wall = Wall(wall_x, wall_y, PATH_WIDTH, PATH_WIDTH, blue)
+                wall_list.add(wall)
+                all_sprites_list.add(wall)
+
+    return wall_list, grid
+
+def get_open_spaces(grid):
+    open_spaces = []
+    for x in range(len(grid)):
+        for y in range(len(grid[x])):
+            if not grid[x][y]:  # If the cell is not a wall
+                open_spaces.append((x, y))
+    return open_spaces
+
+def mark_space_as_occupied(grid, position):
+    x, y = position
+    grid[x][y] = True  # Marking the space as occupied
 
 def setupGate(all_sprites_list):
       gate = pygame.sprite.RenderPlain()
@@ -197,6 +213,7 @@ class Player(pygame.sprite.Sprite):
             self.rect.left=old_x
             self.rect.top=old_y
 
+ghost_list = []
 #Inheritime Player klassist
 class Ghost(Player):
     # Change the speed of the ghost
@@ -221,122 +238,11 @@ class Ghost(Player):
       except IndexError:
          return [0,0]
 
-Pinky_directions = [
-[0,-30,4],
-[15,0,9],
-[0,15,11],
-[-15,0,23],
-[0,15,7],
-[15,0,3],
-[0,-15,3],
-[15,0,19],
-[0,15,3],
-[15,0,3],
-[0,15,3],
-[15,0,3],
-[0,-15,15],
-[-15,0,7],
-[0,15,3],
-[-15,0,19],
-[0,-15,11],
-[15,0,9]
-]
-
-Blinky_directions = [
-[0,-15,4],
-[15,0,9],
-[0,15,11],
-[15,0,3],
-[0,15,7],
-[-15,0,11],
-[0,15,3],
-[15,0,15],
-[0,-15,15],
-[15,0,3],
-[0,-15,11],
-[-15,0,3],
-[0,-15,11],
-[-15,0,3],
-[0,-15,3],
-[-15,0,7],
-[0,-15,3],
-[15,0,15],
-[0,15,15],
-[-15,0,3],
-[0,15,3],
-[-15,0,3],
-[0,-15,7],
-[-15,0,3],
-[0,15,7],
-[-15,0,11],
-[0,-15,7],
-[15,0,5]
-]
-
-Inky_directions = [
-[30,0,2],
-[0,-15,4],
-[15,0,10],
-[0,15,7],
-[15,0,3],
-[0,-15,3],
-[15,0,3],
-[0,-15,15],
-[-15,0,15],
-[0,15,3],
-[15,0,15],
-[0,15,11],
-[-15,0,3],
-[0,-15,7],
-[-15,0,11],
-[0,15,3],
-[-15,0,11],
-[0,15,7],
-[-15,0,3],
-[0,-15,3],
-[-15,0,3],
-[0,-15,15],
-[15,0,15],
-[0,15,3],
-[-15,0,15],
-[0,15,11],
-[15,0,3],
-[0,-15,11],
-[15,0,11],
-[0,15,3],
-[15,0,1],
-]
-
-Clyde_directions = [
-[-30,0,2],
-[0,-15,4],
-[15,0,5],
-[0,15,7],
-[-15,0,11],
-[0,-15,7],
-[-15,0,3],
-[0,15,7],
-[-15,0,7],
-[0,15,15],
-[15,0,15],
-[0,-15,3],
-[-15,0,11],
-[0,-15,7],
-[15,0,3],
-[0,-15,11],
-[15,0,9],
-]
-
-pl = len(Pinky_directions)-1
-bl = len(Blinky_directions)-1
-il = len(Inky_directions)-1
-cl = len(Clyde_directions)-1
-
 # Call this function so the Pygame library can initialize itself
 pygame.init()
   
 # Create an 606x606 sized screen
-screen = pygame.display.set_mode([606, 606])
+screen = pygame.display.set_mode([806, 806])
 
 # This is a list of 'sprites.' Each block in the program is
 # added to this list. The list is managed by a class called 'RenderPlain.'
@@ -379,7 +285,8 @@ def startGame():
 
   pacman_collide = pygame.sprite.RenderPlain()
 
-  wall_list = setupRoomOne(all_sprites_list)
+  wall_list, grid = setupRoomOne(all_sprites_list)
+  open_spaces = get_open_spaces(grid)
 
   gate = setupGate(all_sprites_list)
 
@@ -397,26 +304,18 @@ def startGame():
   c_steps = 0
 
 
+  pacman_pos = random.choice(open_spaces)
+  Pacman = Player(pacman_pos[0] * (CELL_SIZE + PATH_WIDTH) // 2, pacman_pos[1] * (CELL_SIZE + PATH_WIDTH) // 2, "images/Trollman.png")
+  mark_space_as_occupied(grid, pacman_pos)
+  open_spaces.remove(pacman_pos)
   # Create the player paddle object
-  Pacman = Player( w, p_h, "images/Trollman.png" )
+  #Pacman = Player( w, p_h, "images/Trollman.png" )
   all_sprites_list.add(Pacman)
   pacman_collide.add(Pacman)
    
-  Blinky=Ghost( w, b_h, "images/Blinky.png" )
-  monsta_list.add(Blinky)
-  all_sprites_list.add(Blinky)
+  spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos)
 
-  Pinky=Ghost( w, m_h, "images/Pinky.png" )
-  monsta_list.add(Pinky)
-  all_sprites_list.add(Pinky)
-   
-  Inky=Ghost( i_w, m_h, "images/Inky.png" )
-  monsta_list.add(Inky)
-  all_sprites_list.add(Inky)
-   
-  Clyde=Ghost( c_w, m_h, "images/Clyde.png" )
-  monsta_list.add(Clyde)
-  all_sprites_list.add(Clyde)
+  last_spawn_time = pygame.time.get_ticks()
 
   # Draw the grid
   for row in range(19):
@@ -457,56 +356,51 @@ def startGame():
 
           if event.type == pygame.KEYDOWN:
               if event.key == pygame.K_LEFT:
-                  Pacman.changespeed(-30,0)
+                  Pacman.changespeed(-10,0)
               if event.key == pygame.K_RIGHT:
-                  Pacman.changespeed(30,0)
+                  Pacman.changespeed(10,0)
               if event.key == pygame.K_UP:
-                  Pacman.changespeed(0,-30)
+                  Pacman.changespeed(0,-10)
               if event.key == pygame.K_DOWN:
-                  Pacman.changespeed(0,30)
+                  Pacman.changespeed(0,10)
 
           if event.type == pygame.KEYUP:
               if event.key == pygame.K_LEFT:
-                  Pacman.changespeed(30,0)
+                  Pacman.changespeed(10,0)
               if event.key == pygame.K_RIGHT:
-                  Pacman.changespeed(-30,0)
+                  Pacman.changespeed(-10,0)
               if event.key == pygame.K_UP:
-                  Pacman.changespeed(0,30)
+                  Pacman.changespeed(0,10)
               if event.key == pygame.K_DOWN:
-                  Pacman.changespeed(0,-30)
+                  Pacman.changespeed(0,-10)
           
       # ALL EVENT PROCESSING SHOULD GO ABOVE THIS COMMENT
    
       # ALL GAME LOGIC SHOULD GO BELOW THIS COMMENT
       Pacman.update(wall_list,gate)
 
-      returned = Pinky.changespeed(Pinky_directions,False,p_turn,p_steps,pl)
-      p_turn = returned[0]
-      p_steps = returned[1]
-      Pinky.changespeed(Pinky_directions,False,p_turn,p_steps,pl)
-      Pinky.update(wall_list,False)
-
-      returned = Blinky.changespeed(Blinky_directions,False,b_turn,b_steps,bl)
-      b_turn = returned[0]
-      b_steps = returned[1]
-      Blinky.changespeed(Blinky_directions,False,b_turn,b_steps,bl)
-      Blinky.update(wall_list,False)
-
-      returned = Inky.changespeed(Inky_directions,False,i_turn,i_steps,il)
-      i_turn = returned[0]
-      i_steps = returned[1]
-      Inky.changespeed(Inky_directions,False,i_turn,i_steps,il)
-      Inky.update(wall_list,False)
-
-      returned = Clyde.changespeed(Clyde_directions,"clyde",c_turn,c_steps,cl)
-      c_turn = returned[0]
-      c_steps = returned[1]
-      Clyde.changespeed(Clyde_directions,"clyde",c_turn,c_steps,cl)
-      Clyde.update(wall_list,False)
+      current_time = pygame.time.get_ticks()
+      if current_time - last_spawn_time >= 10000:  # 60 seconds
+          
+          if spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=1):
+            last_spawn_time = current_time
 
       # See if the Pacman block has collided with anything.
       blocks_hit_list = pygame.sprite.spritecollide(Pacman, block_list, True)
        
+      for gho in ghost_list:
+        ghost_grid_pos = game_position_to_grid((gho.rect.x, gho.rect.y))
+        pacman_grid_pos = game_position_to_grid((Pacman.rect.x, Pacman.rect.y))
+
+        if manhattan_distance(ghost_grid_pos, pacman_grid_pos) <= 10:
+          path = astar(grid, ghost_grid_pos, pacman_grid_pos)
+          if path:
+              # Move the ghost along the path
+              next_step = path[1]  # Get the next step towards Pacman
+              next_game_pos = grid_position_to_game(next_step)
+              # Update ghost position
+              gho.rect.x, gho.rect.y = next_game_pos
+
       # Check the list of collisions.
       if len(blocks_hit_list) > 0:
           score +=len(blocks_hit_list)
@@ -537,6 +431,42 @@ def startGame():
       pygame.display.flip()
     
       clock.tick(10)
+
+def is_pacman_in_range(ghost_pos, pacman_pos, range=10):
+    return manhattan_distance(ghost_pos, pacman_pos) <= range
+
+def manhattan_distance(pos1, pos2):
+    return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+def spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=None):
+    available_positions = [pos for pos in open_spaces if manhattan_distance(pos, pacman_pos) >= 10]
+    if not available_positions:
+        return False
+    ghost_pos = random.choice(available_positions)
+    # Initialize Ghost here...
+    Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, "images/Pinky.png")  # Replace with actual ghost image
+    monsta_list.add(Ghosty)
+    all_sprites_list.add(Ghosty)
+    mark_space_as_occupied(grid, ghost_pos)
+    open_spaces.remove(ghost_pos)
+    available_positions.remove(ghost_pos)
+    ghost_list.append(Ghosty)
+
+    return True
+
+def game_position_to_grid(position):
+    """Converts game (pixel) position to grid position."""
+    x, y = position
+    grid_x = x // (CELL_SIZE + PATH_WIDTH)
+    grid_y = y // (CELL_SIZE + PATH_WIDTH)
+    return (grid_x, grid_y)
+
+def grid_position_to_game(position):
+    """Converts grid position back to game (pixel) position."""
+    grid_x, grid_y = position
+    x = grid_x * (CELL_SIZE + PATH_WIDTH)
+    y = grid_y * (CELL_SIZE + PATH_WIDTH)
+    return (x, y)
 
 def doNext(message,left,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate):
   while True:
