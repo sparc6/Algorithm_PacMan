@@ -4,6 +4,7 @@
 import pygame
 import random
 from astar import astar
+from game_analytics import GameAnalytics
 
 black = (0,0,0)
 white = (255,255,255)
@@ -12,6 +13,13 @@ green = (0,255,0)
 red = (255,0,0)
 purple = (255,0,255)
 yellow   = ( 255, 255,   0)
+
+ghost_images = [
+    "images/Blinky.png",
+    "images/Clyde.png",
+    "images/Inky.png",
+    "images/Pinky.png"
+]
 
 GRID_WIDTH = 11  # Fewer cells, but each cell is larger
 GRID_HEIGHT = 11
@@ -108,8 +116,8 @@ def mark_space_as_occupied(grid, position):
 
 def setupGate(all_sprites_list):
       gate = pygame.sprite.RenderPlain()
-      gate.add(Wall(282,242,42,2,white))
-      all_sprites_list.add(gate)
+      #gate.add(Wall(282,242,42,2,white))
+      #all_sprites_list.add(gate)
       return gate
 
 # This class represents the ball        
@@ -185,12 +193,6 @@ class Player(pygame.sprite.Sprite):
         if x_collide:
             # Whoops, hit a wall. Go back to the old position
             self.rect.left=old_x
-            # self.rect.top=prev_y
-            # y_collide = pygame.sprite.spritecollide(self, walls, False)
-            # if y_collide:
-            #     # Whoops, hit a wall. Go back to the old position
-            #     self.rect.top=old_y
-            #     print('a')
         else:
 
             self.rect.top = new_y
@@ -200,12 +202,6 @@ class Player(pygame.sprite.Sprite):
             if y_collide:
                 # Whoops, hit a wall. Go back to the old position
                 self.rect.top=old_y
-                # self.rect.left=prev_x
-                # x_collide = pygame.sprite.spritecollide(self, walls, False)
-                # if x_collide:
-                #     # Whoops, hit a wall. Go back to the old position
-                #     self.rect.left=old_x
-                #     print('b')
 
         if gate != False:
           gate_hit = pygame.sprite.spritecollide(self, gate, False)
@@ -218,6 +214,7 @@ ghost_list = []
 class Ghost(Player):
     def __init__(self, x, y, filename):
         super().__init__(x, y, filename)
+        id = 0
         self.path = []  # Current path
         self.last_move_time = 0  # Time of last move
         self.move_cooldown = 500  # Milliseconds between moves
@@ -275,6 +272,7 @@ i_w = 303-16-32 #Inky width
 c_w = 303+(32-16) #Clyde width
 
 def startGame():
+  analytics = GameAnalytics()
 
   all_sprites_list = pygame.sprite.RenderPlain()
 
@@ -336,6 +334,7 @@ def startGame():
       # ALL EVENT PROCESSING SHOULD GO BELOW THIS COMMENT
       for event in pygame.event.get():
           if event.type == pygame.QUIT:
+              analytics.print_events()
               done=True
 
           if event.type == pygame.KEYDOWN:
@@ -347,6 +346,7 @@ def startGame():
                   Pacman.changespeed(0,-10)
               if event.key == pygame.K_DOWN:
                   Pacman.changespeed(0,10)
+              analytics.log_event('pacman_moved', (Pacman.rect.x, Pacman.rect.y))
 
           if event.type == pygame.KEYUP:
               if event.key == pygame.K_LEFT:
@@ -357,6 +357,7 @@ def startGame():
                   Pacman.changespeed(0,10)
               if event.key == pygame.K_DOWN:
                   Pacman.changespeed(0,-10)
+              analytics.log_event('pacman_moved', (Pacman.rect.x, Pacman.rect.y))
           
       # ALL EVENT PROCESSING SHOULD GO ABOVE THIS COMMENT
    
@@ -373,11 +374,12 @@ def startGame():
       blocks_hit_list = pygame.sprite.spritecollide(Pacman, block_list, True)
        
       for gho in ghost_list:
-        update_ghost_movement(gho, (Pacman.rect.x, Pacman.rect.y), wall_list, grid, open_spaces, current_time)
+        update_ghost_movement(gho, (Pacman.rect.x, Pacman.rect.y), wall_list, grid, open_spaces, current_time, analytics)
 
       # Check the list of collisions.
       if len(blocks_hit_list) > 0:
           score +=len(blocks_hit_list)
+          analytics.log_event('brick_collected', (score))
       
       # ALL GAME LOGIC SHOULD GO ABOVE THIS COMMENT
    
@@ -393,12 +395,13 @@ def startGame():
       screen.blit(text, [10, 10])
 
       if score == bll:
-        doNext("Congratulations, you won!",145,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate)
+        doNext("Congratulations, you won!",145,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate, analytics)
 
       monsta_hit_list = pygame.sprite.spritecollide(Pacman, monsta_list, False)
 
       if monsta_hit_list:
-        doNext("Game Over",235,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate)
+        analytics.log_event('pacman_lost', (monsta_hit_list[0].id))
+        doNext("Game Over",235,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate, analytics)
 
       # ALL CODE TO DRAW SHOULD GO ABOVE THIS COMMENT
       
@@ -406,7 +409,7 @@ def startGame():
     
       clock.tick(10)
 
-def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_time):
+def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_time, analytics):
     if current_time - ghost.last_move_time < ghost.move_cooldown:
         return  # Not enough time has passed for the next move
     
@@ -415,19 +418,18 @@ def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_t
 
     if not ghost.path or not is_pacman_in_range:
         if is_pacman_in_range(ghost_grid_pos, target_grid_pos):
+            analytics.log_event('ghost_mode_change', ("chase"))
         # Follow Pac-Man
             print("follow pac man!")
             target_x, target_y = find_nearest_walkable_cell(grid, target_grid_pos[0], target_grid_pos[1])
             print("target cell: ", (target_x, target_y), grid[target_x][target_y])
             path = astar(grid, ghost_grid_pos, (target_x, target_y))
-            print("pacman path: ", path)
             if path:
                 ghost.set_path(path)
         else:
+            analytics.log_event('ghost_mode_change', (ghost.id, "scatter"))
             random_target_pos = random.choice(open_spaces)
-            print("random target pos: ", random_target_pos, grid[random_target_pos[0]][random_target_pos[1]])
             path = astar(grid, ghost_grid_pos, random_target_pos)
-            print("random path: ", path)
             if path:
                 ghost.set_path(path)
 
@@ -436,7 +438,8 @@ def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_t
         next_game_pos = grid_position_to_game(next_step)
         ghost.rect.x, ghost.rect.y = next_game_pos
         ghost.update(walls, False)
-        ghost.last_move_time = current_time 
+        ghost.last_move_time = current_time
+        analytics.log_event('ghost_moved', (ghost.id, ghost.rect.x, ghost.rect.y))
 
 def is_pacman_in_range(ghost_pos, pacman_pos, range=10):
     return manhattan_distance(ghost_pos, pacman_pos) <= range
@@ -450,14 +453,16 @@ def spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, l
         return False
     ghost_pos = random.choice(available_positions)
     # Initialize Ghost here...
-    Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, "images/Pinky.png")  # Replace with actual ghost image
+    random_ghost_image = random.choice(ghost_images)
+    Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, random_ghost_image)  # Replace with actual ghost image
     monsta_list.add(Ghosty)
     all_sprites_list.add(Ghosty)
     #mark_space_as_occupied(grid, ghost_pos)
     open_spaces.remove(ghost_pos)
     available_positions.remove(ghost_pos)
     ghost_list.append(Ghosty)
-
+    print(len(ghost_list))
+    Ghosty.id = len(ghost_list)
     return True
 
 def find_nearest_walkable_cell(grid, x, y):
@@ -507,14 +512,16 @@ def grid_position_to_game(position):
     y = grid_y * ((CELL_SIZE + PATH_WIDTH) // 2)
     return (x, y)
 
-def doNext(message,left,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate):
+def doNext(message,left,all_sprites_list,block_list,monsta_list,pacman_collide,wall_list,gate, analytics):
   while True:
       # ALL EVENT PROCESSING SHOULD GO BELOW THIS COMMENT
       for event in pygame.event.get():
         if event.type == pygame.QUIT:
+          analytics.print_events()
           pygame.quit()
         if event.type == pygame.KEYDOWN:
           if event.key == pygame.K_ESCAPE:
+            analytics.print_events()
             pygame.quit()
           if event.key == pygame.K_RETURN:
             del all_sprites_list
