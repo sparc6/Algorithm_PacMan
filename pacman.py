@@ -31,8 +31,8 @@ pygame.display.set_icon(Trollicon)
 
 #Add music
 pygame.mixer.init()
-pygame.mixer.music.load('pacman.mp3')
-pygame.mixer.music.play(-1, 0.0)
+#pygame.mixer.music.load('pacman.mp3')
+#pygame.mixer.music.play(-1, 0.0)
 
 # This class represents the bar at the bottom that the player controls
 class Wall(pygame.sprite.Sprite):
@@ -215,6 +215,7 @@ class Ghost(Player):
     def __init__(self, x, y, filename):
         super().__init__(x, y, filename)
         id = 0
+        status = "scatter"
         self.path = []  # Current path
         self.last_move_time = 0  # Time of last move
         self.move_cooldown = 500  # Milliseconds between moves
@@ -367,14 +368,14 @@ def startGame():
       current_time = pygame.time.get_ticks()
       if current_time - last_spawn_time >= 10000:  # 60 seconds
           
-          if spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=1):
+          if spawn_ghosts_closest(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=1):
             last_spawn_time = current_time
 
       # See if the Pacman block has collided with anything.
       blocks_hit_list = pygame.sprite.spritecollide(Pacman, block_list, True)
        
       for gho in ghost_list:
-        update_ghost_movement(gho, (Pacman.rect.x, Pacman.rect.y), wall_list, grid, open_spaces, current_time, analytics)
+        update_ghost_movement_every_move(gho, (Pacman.rect.x, Pacman.rect.y), wall_list, grid, open_spaces, current_time, analytics)
 
       # Check the list of collisions.
       if len(blocks_hit_list) > 0:
@@ -409,6 +410,48 @@ def startGame():
     
       clock.tick(10)
 
+def update_ghost_movement_every_move(ghost, target_pos, walls, grid, open_spaces, current_time, analytics):
+    if current_time - ghost.last_move_time < ghost.move_cooldown:
+        return  # Not enough time has passed for the next move
+    
+    ghost_grid_pos = game_position_to_grid((ghost.rect.x, ghost.rect.y))
+    target_grid_pos = game_position_to_grid(target_pos)
+
+    if not ghost.path:
+        if is_pacman_in_range(ghost_grid_pos, target_grid_pos):
+            ghost.status = "chase"
+            analytics.log_event('ghost_mode_change', (ghost.id, "chase"))
+        # Follow Pac-Man
+            print("follow pac man!")
+            target_x, target_y = find_nearest_walkable_cell(grid, target_grid_pos[0], target_grid_pos[1])
+            path = astar(grid, ghost_grid_pos, (target_x, target_y))
+            if path:
+                ghost.set_path(path)
+        else:
+            ghost.status = "scatter"
+            analytics.log_event('ghost_mode_change', (ghost.id, "scatter"))
+            random_target_pos = random.choice(open_spaces)
+            path = astar(grid, ghost_grid_pos, random_target_pos)
+            if path:
+                ghost.set_path(path)
+    elif is_pacman_in_range(ghost_grid_pos, target_grid_pos) and not ghost.status == "chase":
+            ghost.status = "chase"
+            analytics.log_event('ghost_mode_change', (ghost.id, "chase"))
+            # Follow Pac-Man
+            print("follow pac man!")
+            target_x, target_y = find_nearest_walkable_cell(grid, target_grid_pos[0], target_grid_pos[1])
+            path = astar(grid, ghost_grid_pos, (target_x, target_y))
+            if path:
+                ghost.set_path(path)
+
+    next_step = ghost.get_next_step()
+    if next_step:
+        next_game_pos = grid_position_to_game(next_step)
+        ghost.rect.x, ghost.rect.y = next_game_pos
+        ghost.update(walls, False)
+        ghost.last_move_time = current_time
+        analytics.log_event('ghost_moved', (ghost.id, ghost.rect.x, ghost.rect.y))
+
 def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_time, analytics):
     if current_time - ghost.last_move_time < ghost.move_cooldown:
         return  # Not enough time has passed for the next move
@@ -416,23 +459,24 @@ def update_ghost_movement(ghost, target_pos, walls, grid, open_spaces, current_t
     ghost_grid_pos = game_position_to_grid((ghost.rect.x, ghost.rect.y))
     target_grid_pos = game_position_to_grid(target_pos)
 
-    if not ghost.path or not is_pacman_in_range:
+    if not ghost.path:
         if is_pacman_in_range(ghost_grid_pos, target_grid_pos):
-            analytics.log_event('ghost_mode_change', ("chase"))
+            ghost.status = "chase"
+            analytics.log_event('ghost_mode_change', (ghost.id, "chase"))
         # Follow Pac-Man
             print("follow pac man!")
             target_x, target_y = find_nearest_walkable_cell(grid, target_grid_pos[0], target_grid_pos[1])
-            print("target cell: ", (target_x, target_y), grid[target_x][target_y])
             path = astar(grid, ghost_grid_pos, (target_x, target_y))
             if path:
                 ghost.set_path(path)
         else:
+            ghost.status = "scatter"
             analytics.log_event('ghost_mode_change', (ghost.id, "scatter"))
             random_target_pos = random.choice(open_spaces)
             path = astar(grid, ghost_grid_pos, random_target_pos)
             if path:
                 ghost.set_path(path)
-
+        
     next_step = ghost.get_next_step()
     if next_step:
         next_game_pos = grid_position_to_game(next_step)
@@ -447,17 +491,32 @@ def is_pacman_in_range(ghost_pos, pacman_pos, range=10):
 def manhattan_distance(pos1, pos2):
     return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
+def spawn_ghosts_closest(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=None):
+    available_positions = [pos for pos in open_spaces if manhattan_distance(pos, pacman_pos) >= 10]
+
+    if not available_positions:
+        return False
+    available_positions.sort(key=lambda pos: manhattan_distance(pos, pacman_pos))
+    ghost_pos = available_positions[0]
+    random_ghost_image = random.choice(ghost_images)
+    Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, random_ghost_image)
+    monsta_list.add(Ghosty)
+    all_sprites_list.add(Ghosty)
+    ghost_list.append(Ghosty)
+    Ghosty.id = len(ghost_list)
+    print(len(ghost_list))
+    open_spaces.remove(ghost_pos)
+    return True
+
 def spawn_ghosts(all_sprites_list, monsta_list, grid, open_spaces, pacman_pos, limit=None):
     available_positions = [pos for pos in open_spaces if manhattan_distance(pos, pacman_pos) >= 10]
     if not available_positions:
         return False
     ghost_pos = random.choice(available_positions)
-    # Initialize Ghost here...
     random_ghost_image = random.choice(ghost_images)
     Ghosty = Ghost(ghost_pos[0]* (CELL_SIZE + PATH_WIDTH) // 2, ghost_pos[1]* (CELL_SIZE + PATH_WIDTH) // 2, random_ghost_image)  # Replace with actual ghost image
     monsta_list.add(Ghosty)
     all_sprites_list.add(Ghosty)
-    #mark_space_as_occupied(grid, ghost_pos)
     open_spaces.remove(ghost_pos)
     available_positions.remove(ghost_pos)
     ghost_list.append(Ghosty)
